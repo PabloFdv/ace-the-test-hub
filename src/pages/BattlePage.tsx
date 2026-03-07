@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import Header from "@/components/Header";
-import { useUserKey, useProfile, getBattles, createBattle, joinBattle, submitBattleScore, deleteBattle } from "@/hooks/useGamification";
+import { useUserKey, useProfile, getBattles, createBattle, joinBattle, submitBattleScore, deleteBattle, addXP } from "@/hooks/useGamification";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -36,8 +36,11 @@ export default function BattlePage() {
     if (!userKey || !profile) return;
     setCreating(true);
     try {
-      const questions = SAMPLE_QUESTIONS_BY_SUBJECT[subject] || SAMPLE_QUESTIONS_BY_SUBJECT.matematica;
-      const res = await createBattle(userKey, profile.display_name, subject, questions);
+      // Get questions for the SELECTED subject, not just math
+      const subjectQuestions = SAMPLE_QUESTIONS_BY_SUBJECT[subject] || SAMPLE_QUESTIONS_BY_SUBJECT.matematica;
+      // Shuffle and pick 5 questions
+      const shuffled = [...subjectQuestions].sort(() => Math.random() - 0.5).slice(0, 5);
+      const res = await createBattle(userKey, profile.display_name, subject, shuffled);
       setBattles(prev => [res.battle, ...prev]);
       toast({ title: "⚔️ Batalha criada!", description: `Matéria: ${ALL_SUBJECTS.find(s => s.id === subject)?.name}. Aguardando oponente...` });
     } catch {
@@ -84,7 +87,9 @@ export default function BattlePage() {
     setAnswered(true);
     setSelectedAnswer(answer);
     const questions = playing?.questions || [];
-    const isCorrect = answer === questions[currentQ]?.correct;
+    const q = questions[currentQ];
+    // Fix: compare against correct field - handle both string match and q.correct
+    const isCorrect = answer === q?.correct;
     const newScore = isCorrect ? score + 1 : score;
     if (isCorrect) setScore(newScore);
 
@@ -96,6 +101,8 @@ export default function BattlePage() {
       } else {
         if (userKey && playing) {
           submitBattleScore(playing.id, userKey, newScore);
+          // Award XP for battle completion
+          addXP(userKey, newScore * 10 + 15, "batalha");
         }
         toast({ title: "⚔️ Batalha finalizada!", description: `Você acertou ${newScore}/${questions.length}` });
         setPlaying(null);
@@ -122,10 +129,10 @@ export default function BattlePage() {
             <Card>
               <CardContent className="p-6">
                 <h2 className="text-xl font-bold mb-6">{q.q}</h2>
-                <div className="grid grid-cols-2 gap-3">
-                  {q.options.map((opt: string) => (
+                <div className="grid grid-cols-1 gap-3">
+                  {(q.options || []).map((opt: string) => (
                     <Button key={opt} variant={answered ? (opt === q.correct ? "default" : opt === selectedAnswer ? "destructive" : "outline") : "outline"}
-                      className="h-14 text-lg" onClick={() => handleAnswer(opt)} disabled={answered}
+                      className="h-auto py-3 text-left justify-start" onClick={() => handleAnswer(opt)} disabled={answered}
                     >
                       {opt}
                     </Button>
@@ -171,7 +178,7 @@ export default function BattlePage() {
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <Users className="h-5 w-5" />
-              Batalhas
+              Batalhas ({battles.length})
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -206,16 +213,17 @@ export default function BattlePage() {
                       </Badge>
                     )}
                     {b.status === "pending" && b.challenger_key === userKey && (
-                      <Badge variant="outline">Aguardando</Badge>
+                      <>
+                        <Badge variant="outline">Aguardando</Badge>
+                        <Button size="sm" variant="outline" onClick={() => startPlay(b)}>Treinar</Button>
+                      </>
                     )}
                     {b.status === "active" && (
                       <Button size="sm" onClick={() => startPlay(b)}>Jogar</Button>
                     )}
-                    {(b.challenger_key === userKey || b.status === "completed") && (
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(b.id)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    )}
+                    <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(b.id)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </div>
                 </div>
               );

@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Flame, Trophy, Brain, Target, Zap, BookOpen, Swords, Timer, TrendingUp, AlertTriangle, Map, Sparkles, GraduationCap, Pencil, Check, X, Users } from "lucide-react";
+import { Flame, Trophy, Brain, Target, Zap, BookOpen, Swords, Timer, TrendingUp, AlertTriangle, Sparkles, GraduationCap, Pencil, Check, X, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { TURMAS } from "@/lib/constants";
 
@@ -92,6 +92,10 @@ export default function StudentDashboard() {
   const missionsList = missions?.missions || [];
   const completedMissions = (missionsList as any[]).filter((m: any) => m.current >= m.target).length;
 
+  // Weekly study goal
+  const weeklyGoal = 50;
+  const weeklyProgress = Math.min(weeklyGoal, Math.round((profile?.total_study_minutes || 0) / 5));
+
   return (
     <div className="min-h-screen bg-background">
       <Header />
@@ -137,19 +141,19 @@ export default function StudentDashboard() {
                     <div className="flex items-center gap-2 mt-2">
                       <Users className="h-3.5 w-3.5 text-muted-foreground" />
                       {editingTurma ? (
-                        <Select value={profile?.turma || ""} onValueChange={handleSaveTurma}>
-                          <SelectTrigger className="h-7 text-xs max-w-64"><SelectValue placeholder="Selecionar turma" /></SelectTrigger>
-                          <SelectContent>
-                            {TURMAS.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
+                        <div className="flex items-center gap-2">
+                          <Select value={profile?.turma || ""} onValueChange={handleSaveTurma}>
+                            <SelectTrigger className="h-7 text-xs max-w-64"><SelectValue placeholder="Selecionar turma" /></SelectTrigger>
+                            <SelectContent>
+                              {TURMAS.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setEditingTurma(false)}><X className="h-3 w-3" /></Button>
+                        </div>
                       ) : (
                         <button onClick={() => setEditingTurma(true)} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
                           {profile?.turma || "Selecionar turma →"}
                         </button>
-                      )}
-                      {editingTurma && (
-                        <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setEditingTurma(false)}><X className="h-3 w-3" /></Button>
                       )}
                     </div>
                   </div>
@@ -170,22 +174,39 @@ export default function StudentDashboard() {
           </Card>
         </motion.div>
 
+        {/* Weekly Goal */}
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <Target className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-medium">Meta Semanal</span>
+                </div>
+                <span className="text-xs text-muted-foreground">{weeklyProgress}/{weeklyGoal} exercícios</span>
+              </div>
+              <Progress value={(weeklyProgress / weeklyGoal) * 100} className="h-2" />
+            </CardContent>
+          </Card>
+        </motion.div>
+
         {/* Quick Actions */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
           {[
-            { icon: Zap, label: "Estudo Rápido", desc: "3 questões", href: "/auto-study?mode=quick", color: "text-yellow-500" },
+            { icon: Zap, label: "Desafio 30s", desc: "Modo rápido", href: "/challenge", color: "text-yellow-500" },
             { icon: Swords, label: "Batalha", desc: "Desafiar", href: "/battle", color: "text-red-500" },
             { icon: Target, label: "Simulado", desc: "Modo prova", href: "/simulator", color: "text-blue-500" },
             { icon: AlertTriangle, label: "Lab de Erros", desc: "Revisar", href: "/error-lab", color: "text-orange-500" },
             { icon: Timer, label: "Foco", desc: "Cronômetro", href: "/focus", color: "text-purple-500" },
+            { icon: Sparkles, label: "IA Tutor", desc: "Estudar", href: "/auto-study", color: "text-emerald-500" },
           ].map((action, i) => (
-            <motion.div key={action.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
+            <motion.div key={action.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}>
               <Link to={action.href}>
                 <Card className="hover:border-primary/50 transition-all cursor-pointer group">
-                  <CardContent className="p-4 flex flex-col items-center gap-1 text-center">
-                    <action.icon className={`h-7 w-7 ${action.color} group-hover:scale-110 transition-transform`} />
-                    <span className="text-sm font-medium">{action.label}</span>
-                    <span className="text-xs text-muted-foreground">{action.desc}</span>
+                  <CardContent className="p-3 flex flex-col items-center gap-1 text-center">
+                    <action.icon className={`h-6 w-6 ${action.color} group-hover:scale-110 transition-transform`} />
+                    <span className="text-xs font-medium">{action.label}</span>
+                    <span className="text-[10px] text-muted-foreground">{action.desc}</span>
                   </CardContent>
                 </Card>
               </Link>
@@ -326,12 +347,12 @@ export default function StudentDashboard() {
           </motion.div>
         </div>
 
-        {/* Navigation to more features */}
+        {/* Navigation */}
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           {[
             { icon: Trophy, label: "Ranking", desc: "Classificação", href: "/ranking", color: "text-yellow-500" },
-            { icon: Sparkles, label: "Estudo Automático", desc: "IA escolhe", href: "/auto-study", color: "text-purple-500" },
             { icon: BookOpen, label: "Aulas", desc: "Conteúdo", href: "/", color: "text-green-500" },
+            { icon: Brain, label: "Chat IA", desc: "Pergunte", href: "/chat", color: "text-purple-500" },
           ].map((item) => (
             <Link key={item.label} to={item.href}>
               <Card className="hover:border-primary/30 transition-all cursor-pointer">

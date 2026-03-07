@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Plus, Trash2, Ban, RotateCcw, Copy, Check, LogOut, Key,
-  ShieldCheck, Loader2, Unlock, Users, BarChart3, User, ChevronDown
+  ShieldCheck, Loader2, Unlock, Users, User, ChevronDown, MessageSquare, Send
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,15 +11,23 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
 import Header from "@/components/Header";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { getAllStudents, getStudentsByTurma, getTurmaStats, getStudentDetail } from "@/hooks/useGamification";
+import { getAllStudents, getTurmaStats, getStudentDetail } from "@/hooks/useGamification";
 import { TURMAS } from "@/lib/constants";
+import { SUPABASE_URL } from "@/lib/supabase-config";
 
 interface AccessKey {
   id: string; key: string; created_by: string; used: boolean;
   used_by: string | null; created_at: string; used_at: string | null; blocked: boolean;
+}
+
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  timestamp: Date;
 }
 
 const AdminDashboard = () => {
@@ -31,13 +39,19 @@ const AdminDashboard = () => {
   const [generating, setGenerating] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  // Student analytics
   const [allStudents, setAllStudents] = useState<any[]>([]);
   const [selectedTurma, setSelectedTurma] = useState<string>("");
   const [turmaStats, setTurmaStats] = useState<any>(null);
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [studentDetail, setStudentDetail] = useState<any>(null);
   const [studentsLoading, setStudentsLoading] = useState(false);
+
+  // Admin Chat
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    { role: "assistant", content: "👋 Olá Pablo! Sou o assistente de manutenção do sistema. Relate um bug ou problema e tentarei corrigir automaticamente.\n\nExemplos:\n• \"Resetar XP do aluno João\"\n• \"Remover batalhas antigas\"\n• \"Verificar alunos sem turma\"\n• \"Listar todos os erros do sistema\"", timestamp: new Date() }
+  ]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
 
   useEffect(() => {
     if (role !== "admin") { navigate("/login"); return; }
@@ -71,7 +85,7 @@ const AdminDashboard = () => {
   };
 
   const apiCall = async (action: string, keyId?: string) => {
-    const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-keys`, {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/admin-keys`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, adminKey, keyId }),
@@ -106,6 +120,102 @@ const AdminDashboard = () => {
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
+  // Admin Chat - Process commands
+  const processAdminChat = async (message: string) => {
+    setChatLoading(true);
+    const userMsg: ChatMessage = { role: "user", content: message, timestamp: new Date() };
+    setChatMessages(prev => [...prev, userMsg]);
+    setChatInput("");
+
+    let response = "";
+    const lowerMsg = message.toLowerCase();
+
+    try {
+      // Analyze and auto-fix
+      if (lowerMsg.includes("resetar xp") || lowerMsg.includes("reset xp") || lowerMsg.includes("zerar xp")) {
+        const nameMatch = message.match(/(?:do|da|de)\s+(\w+)/i);
+        if (nameMatch) {
+          const studentName = nameMatch[1];
+          const student = allStudents.find(s => s.display_name.toLowerCase().includes(studentName.toLowerCase()));
+          if (student) {
+            try {
+              await fetch(`${SUPABASE_URL}/functions/v1/gamification`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "update_profile", user_key: student.user_key, xp: 0 }),
+              });
+              response = `✅ XP do aluno **${student.display_name}** foi resetado para 0.\n\nRecarregue os dados para ver a mudança.`;
+              loadStudents();
+            } catch {
+              response = `❌ Erro ao resetar XP. O backend pode não suportar essa operação diretamente.`;
+            }
+          } else {
+            response = `⚠️ Aluno com nome "${studentName}" não encontrado.\n\nAlunos disponíveis:\n${allStudents.map(s => `• ${s.display_name}`).join("\n")}`;
+          }
+        } else {
+          response = "ℹ️ Especifique o aluno. Ex: \"Resetar XP do João\"";
+        }
+      } else if (lowerMsg.includes("sem turma") || lowerMsg.includes("alunos sem turma")) {
+        const semTurma = allStudents.filter(s => !s.turma);
+        if (semTurma.length > 0) {
+          response = `📋 **${semTurma.length} aluno(s) sem turma:**\n${semTurma.map(s => `• ${s.display_name} (${s.user_key})`).join("\n")}\n\nSolicite ao aluno que selecione a turma no painel.`;
+        } else {
+          response = "✅ Todos os alunos já possuem turma definida!";
+        }
+      } else if (lowerMsg.includes("remover batalha") || lowerMsg.includes("limpar batalha")) {
+        response = "🔄 Para limpar batalhas antigas, acesse a página de Batalha e use o botão de deletar. Batalhas completadas podem ser removidas pelo criador ou admin.\n\n⚠️ A remoção em massa requer acesso direto ao banco de dados Supabase.";
+      } else if (lowerMsg.includes("listar aluno") || lowerMsg.includes("todos os aluno")) {
+        const turmaGroups: Record<string, any[]> = {};
+        allStudents.forEach(s => {
+          const t = s.turma || "Sem turma";
+          if (!turmaGroups[t]) turmaGroups[t] = [];
+          turmaGroups[t].push(s);
+        });
+        response = `📊 **Total: ${allStudents.length} alunos**\n\n`;
+        Object.entries(turmaGroups).forEach(([turma, students]) => {
+          response += `**${turma}** (${students.length}):\n`;
+          students.forEach(s => { response += `  • ${s.display_name} — Nível ${s.level}, ${s.xp} XP\n`; });
+          response += "\n";
+        });
+      } else if (lowerMsg.includes("estatística") || lowerMsg.includes("resumo") || lowerMsg.includes("status do sistema")) {
+        const totalXP = allStudents.reduce((s, a) => s + (a.xp || 0), 0);
+        const avgXP = allStudents.length > 0 ? Math.round(totalXP / allStudents.length) : 0;
+        const avgLevel = allStudents.length > 0 ? (allStudents.reduce((s, a) => s + (a.level || 1), 0) / allStudents.length).toFixed(1) : "0";
+        const withTurma = allStudents.filter(s => s.turma).length;
+        const activeToday = allStudents.filter(s => s.last_study_date === new Date().toISOString().split("T")[0]).length;
+        response = `📊 **Status do Sistema**\n\n• Total de alunos: **${allStudents.length}**\n• XP total: **${totalXP}**\n• XP médio: **${avgXP}**\n• Nível médio: **${avgLevel}**\n• Com turma: **${withTurma}/${allStudents.length}**\n• Ativos hoje: **${activeToday}**`;
+      } else if (lowerMsg.includes("ranking") || lowerMsg.includes("top aluno")) {
+        const sorted = [...allStudents].sort((a, b) => (b.xp || 0) - (a.xp || 0)).slice(0, 10);
+        response = `🏆 **Top 10 Alunos por XP:**\n\n`;
+        sorted.forEach((s, i) => { response += `${i + 1}. ${s.display_name} — ${s.xp} XP (Nível ${s.level})\n`; });
+      } else if (lowerMsg.includes("bug") || lowerMsg.includes("erro") || lowerMsg.includes("problema")) {
+        response = `🔍 **Diagnóstico automático:**\n\n`;
+        const issues: string[] = [];
+        const semTurma = allStudents.filter(s => !s.turma);
+        if (semTurma.length) issues.push(`⚠️ ${semTurma.length} aluno(s) sem turma`);
+        const zeroXP = allStudents.filter(s => (s.xp || 0) === 0 && s.user_key !== "ADMIN");
+        if (zeroXP.length) issues.push(`⚠️ ${zeroXP.length} aluno(s) com 0 XP`);
+        const noStudy = allStudents.filter(s => !s.last_study_date);
+        if (noStudy.length) issues.push(`⚠️ ${noStudy.length} aluno(s) nunca estudaram`);
+        if (issues.length === 0) {
+          response += "✅ Nenhum problema detectado! O sistema está funcionando normalmente.";
+        } else {
+          response += issues.join("\n") + "\n\nDescreva o bug específico e tentarei resolver!";
+        }
+      } else if (lowerMsg.includes("ajuda") || lowerMsg.includes("help")) {
+        response = `🛠 **Comandos disponíveis:**\n\n• **\"Listar alunos\"** — Ver todos os alunos\n• **\"Alunos sem turma\"** — Verificar quem falta turma\n• **\"Resetar XP do [nome]\"** — Zerar XP de um aluno\n• **\"Estatísticas\"** — Resumo do sistema\n• **\"Ranking\"** — Top alunos por XP\n• **\"Bug\"** — Diagnóstico automático\n• **\"Status do sistema\"** — Verificação geral`;
+      } else {
+        response = `🤖 Não entendi completamente o comando. Tente:\n\n• \"Listar alunos\"\n• \"Estatísticas\"\n• \"Alunos sem turma\"\n• \"Ranking\"\n• \"Bug\" ou \"erro\"\n• \"Ajuda\"`;
+      }
+    } catch (err) {
+      response = `❌ Erro ao processar: ${err}`;
+    }
+
+    const assistantMsg: ChatMessage = { role: "assistant", content: response, timestamp: new Date() };
+    setChatMessages(prev => [...prev, assistantMsg]);
+    setChatLoading(false);
+  };
+
   const usedCount = keys.filter(k => k.used).length;
   const activeCount = keys.filter(k => !k.used && !k.blocked).length;
   const blockedCount = keys.filter(k => k.blocked).length;
@@ -132,14 +242,14 @@ const AdminDashboard = () => {
         </div>
 
         <Tabs defaultValue="students" className="space-y-6">
-          <TabsList className="grid grid-cols-2 w-full max-w-md">
-            <TabsTrigger value="students" className="gap-2"><Users className="h-4 w-4" />Alunos & Turmas</TabsTrigger>
+          <TabsList className="grid grid-cols-3 w-full max-w-lg">
+            <TabsTrigger value="students" className="gap-2"><Users className="h-4 w-4" />Alunos</TabsTrigger>
             <TabsTrigger value="keys" className="gap-2"><Key className="h-4 w-4" />Senhas</TabsTrigger>
+            <TabsTrigger value="chat" className="gap-2"><MessageSquare className="h-4 w-4" />Auto-Fix</TabsTrigger>
           </TabsList>
 
           {/* Students Tab */}
           <TabsContent value="students" className="space-y-6">
-            {/* Turma Filter */}
             <div className="flex gap-3 items-center flex-wrap">
               <Select value={selectedTurma || "all"} onValueChange={(v) => setSelectedTurma(v === "all" ? "" : v)}>
                 <SelectTrigger className="max-w-72"><SelectValue placeholder="Todas as turmas" /></SelectTrigger>
@@ -151,7 +261,6 @@ const AdminDashboard = () => {
               <Badge variant="outline">{filteredStudents.length} alunos</Badge>
             </div>
 
-            {/* Turma Stats */}
             {turmaStats && (
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                 {[
@@ -171,11 +280,8 @@ const AdminDashboard = () => {
               </div>
             )}
 
-            {/* Student List */}
             <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg">Alunos</CardTitle>
-              </CardHeader>
+              <CardHeader className="pb-3"><CardTitle className="text-lg">Alunos</CardTitle></CardHeader>
               <CardContent className="space-y-2">
                 {studentsLoading ? (
                   <div className="text-center py-8 text-muted-foreground">Carregando...</div>
@@ -201,40 +307,32 @@ const AdminDashboard = () => {
               </CardContent>
             </Card>
 
-            {/* Student Detail Modal */}
             {selectedStudent && studentDetail && (
               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
                 <Card className="border-primary/30">
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-lg flex items-center gap-2">
-                        <User className="h-5 w-5" />
-                        {selectedStudent.display_name}
+                        <User className="h-5 w-5" />{selectedStudent.display_name}
                       </CardTitle>
                       <Button variant="ghost" size="sm" onClick={() => { setSelectedStudent(null); setStudentDetail(null); }}>✕</Button>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      <div className="text-center p-2 bg-muted rounded-lg">
-                        <div className="font-bold text-primary">{selectedStudent.xp}</div>
-                        <div className="text-xs text-muted-foreground">XP Total</div>
-                      </div>
-                      <div className="text-center p-2 bg-muted rounded-lg">
-                        <div className="font-bold">Nível {selectedStudent.level}</div>
-                        <div className="text-xs text-muted-foreground">Nível</div>
-                      </div>
-                      <div className="text-center p-2 bg-muted rounded-lg">
-                        <div className="font-bold">{selectedStudent.streak_days}🔥</div>
-                        <div className="text-xs text-muted-foreground">Sequência</div>
-                      </div>
-                      <div className="text-center p-2 bg-muted rounded-lg">
-                        <div className="font-bold">{selectedStudent.total_study_minutes} min</div>
-                        <div className="text-xs text-muted-foreground">Estudados</div>
-                      </div>
+                      {[
+                        { label: "XP Total", value: selectedStudent.xp, color: "text-primary" },
+                        { label: "Nível", value: `Nível ${selectedStudent.level}`, color: "" },
+                        { label: "Sequência", value: `${selectedStudent.streak_days}🔥`, color: "" },
+                        { label: "Estudados", value: `${selectedStudent.total_study_minutes} min`, color: "" },
+                      ].map(item => (
+                        <div key={item.label} className="text-center p-2 bg-muted rounded-lg">
+                          <div className={`font-bold ${item.color}`}>{item.value}</div>
+                          <div className="text-xs text-muted-foreground">{item.label}</div>
+                        </div>
+                      ))}
                     </div>
 
-                    {/* Progress by topic */}
                     {studentDetail.progress?.length > 0 && (
                       <div>
                         <h4 className="text-sm font-medium mb-2">Progresso por tópico</h4>
@@ -251,7 +349,6 @@ const AdminDashboard = () => {
                       </div>
                     )}
 
-                    {/* Errors */}
                     {studentDetail.errors?.length > 0 && (
                       <div>
                         <h4 className="text-sm font-medium mb-2 text-destructive">Erros ativos: {studentDetail.errors.length}</h4>
@@ -343,6 +440,52 @@ const AdminDashboard = () => {
                 ))}
               </div>
             )}
+          </TabsContent>
+
+          {/* Auto-Fix Chat Tab */}
+          <TabsContent value="chat" className="space-y-4">
+            <Card className="h-[60vh] flex flex-col">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <MessageSquare className="h-5 w-5 text-primary" />
+                  Chat Auto-Corretor 🤖
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex-1 flex flex-col overflow-hidden p-4">
+                <div className="flex-1 overflow-y-auto space-y-3 mb-4">
+                  {chatMessages.map((msg, i) => (
+                    <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                      <div className={`max-w-[85%] rounded-xl px-4 py-2.5 text-sm whitespace-pre-wrap ${
+                        msg.role === "user"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-foreground"
+                      }`}>
+                        {msg.content}
+                      </div>
+                    </div>
+                  ))}
+                  {chatLoading && (
+                    <div className="flex justify-start">
+                      <div className="bg-muted rounded-xl px-4 py-2.5 text-sm">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <form onSubmit={(e) => { e.preventDefault(); if (chatInput.trim()) processAdminChat(chatInput.trim()); }} className="flex gap-2">
+                  <Input
+                    value={chatInput}
+                    onChange={e => setChatInput(e.target.value)}
+                    placeholder="Descreva um bug ou peça uma ação..."
+                    className="flex-1"
+                    disabled={chatLoading}
+                  />
+                  <Button type="submit" size="icon" disabled={chatLoading || !chatInput.trim()}>
+                    <Send className="h-4 w-4" />
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </div>
