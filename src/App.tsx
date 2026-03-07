@@ -18,6 +18,7 @@ import SimulatorPage from "./pages/SimulatorPage";
 import ErrorLabPage from "./pages/ErrorLabPage";
 import AutoStudyPage from "./pages/AutoStudyPage";
 import FocusPage from "./pages/FocusPage";
+import ChallengePage from "./pages/ChallengePage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
