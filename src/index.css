@@ -100,8 +100,7 @@
   }
 }
 
-/* KaTeX styles */
-@import "katex/dist/katex.min.css";
+/* KaTeX styles loaded via @import at top */
 
 /* Lesson content markdown styling */
 .lesson-content h1 {
